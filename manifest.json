@@ -1,22 +1,15 @@
 {
     "manifest_version": 3,
-    "name": "YouTube Music url sender",
+    "name": "YouTube Music URL Sender",
     "version": "1.0",
-    "description": "Sends YouTube Music URLs to local server",
+    "description": "Sends the current YouTube Music URL to PlaylistManager when requested",
     "permissions": [
-        "activeTab",
-        "scripting",
-        "webRequest"
+        "activeTab"
     ],
     "host_permissions": [
         "https://music.youtube.com/*",
         "http://localhost:5000/*"
     ],
-    "background": {
-        "scripts": [
-            "background.js"
-        ]
-    },
     "content_scripts": [
         {
             "matches": [
@@ -31,8 +24,8 @@
         "48": "icons/icon-48.png"
     },
     "browser_specific_settings": {
-      "gecko": {
-          "id": "youtube-music-extension@example.com"
-      }
+        "gecko": {
+            "id": "youtube-music-extension@example.com"
+        }
     }
 }
