@@ -16,6 +16,12 @@ let pollTimer = null;
 let sentThisSession = false;
 let consecutiveFailures = 0;
 let currentInterval = POLL_INTERVAL_MS;
+// The server issues a fresh per-flow token on every keybind press.
+// Tracking it lets us detect a brand-new flow even when the server was
+// never observed going down between two quick keybind presses (which
+// would otherwise leave sentThisSession stale and the new flow waiting
+// forever for a URL).
+let lastToken = null;
 
 // Extract the clean YouTube Music URL for the current song.
 function extractSongUrl() {
@@ -38,10 +44,13 @@ function extractSongUrl() {
     return null;
 }
 
-function sendUrl(url) {
+function sendUrl(url, token) {
     return fetch(`${SERVER_URL}/receive-url`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'X-PM-Token': token,
+        },
         body: JSON.stringify({ url }),
     }).then(resp => {
         if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
@@ -57,20 +66,38 @@ function poll() {
             consecutiveFailures = 0;
             currentInterval = POLL_INTERVAL_MS;
 
-            if (data.ready && !sentThisSession) {
-                const url = extractSongUrl();
-                if (url) {
-                    sentThisSession = true;
-                    sendUrl(url).catch(() => {});
+            if (data.ready) {
+                // New flow detection: the token changes per keybind press.
+                if (data.token && data.token !== lastToken) {
+                    lastToken = data.token;
+                    sentThisSession = false;
                 }
-            }
-            if (!data.ready) {
+                if (!sentThisSession) {
+                    const url = extractSongUrl();
+                    if (url && data.token) {
+                        sentThisSession = true;
+                        sendUrl(url, data.token).catch(() => {
+                            // The POST was rejected (flow ended, token mismatch,
+                            // server raced away) — allow a retry on the next poll
+                            // instead of silently dropping the song.
+                            sentThisSession = false;
+                            consecutiveFailures++;
+                            currentInterval = Math.min(
+                                currentInterval * BACKOFF_FACTOR,
+                                MAX_BACKOFF_MS
+                            );
+                        });
+                    }
+                }
+            } else {
                 // Server acknowledged or flow ended — reset for next keybind
+                lastToken = null;
                 sentThisSession = false;
             }
         })
         .catch(() => {
             // Server is down — that's expected between keybinds
+            lastToken = null;
             sentThisSession = false;
             consecutiveFailures++;
             if (consecutiveFailures >= CONSECUTIVE_FAILURES_RESET) {
