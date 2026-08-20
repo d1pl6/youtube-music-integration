@@ -5,7 +5,7 @@
 // Uses exponential back-off when the server is unreachable to
 // avoid excessive network churn between keybind presses.
 
-const SERVER_URL = 'http://localhost:5000';
+const SERVER_URL = 'http://127.0.0.1:5000';
 const POLL_INTERVAL_MS = 500;
 const MAX_BACKOFF_MS = 8000;
 const BACKOFF_FACTOR = 2;
@@ -58,6 +58,17 @@ function sendUrl(url, token) {
     });
 }
 
+// Is this tab the one actually playing music?  With several YT Music
+// tabs open the server accepts the first URL it receives - a paused
+// background tab would race the playing one.  Paused tabs (the video
+// element exists and is paused) must stay silent; when no player element
+// is found yet (page still loading) we send anyway rather than drop.
+function isTabPlaying() {
+    const video = document.querySelector('video');
+    if (!video) return true;
+    return !video.paused;
+}
+
 function poll() {
     fetch(`${SERVER_URL}/status`)
         .then(resp => resp.json())
@@ -72,7 +83,7 @@ function poll() {
                     lastToken = data.token;
                     sentThisSession = false;
                 }
-                if (!sentThisSession) {
+                if (!sentThisSession && isTabPlaying()) {
                     const url = extractSongUrl();
                     if (url && data.token) {
                         sentThisSession = true;
