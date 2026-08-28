@@ -23,6 +23,13 @@ let currentInterval = POLL_INTERVAL_MS;
 // forever for a URL).
 let lastToken = null;
 
+// Most recent song URL sampled on any poll (ready or idle).  Used to fix a
+// track-rollover race (see pickSongToSend): if the song visibly changes in
+// the window straddling a keybind press, the user was pressing for the
+// PREVIOUS song, so we fall back to this buffered URL instead of eagerly
+// sending whatever the player just rolled onto.
+let lastUrl = null;
+
 // Extract the clean YouTube Music URL for the current song.
 function extractSongUrl() {
     try {
@@ -84,10 +91,15 @@ function poll() {
                     sentThisSession = false;
                 }
                 if (!sentThisSession && isTabPlaying()) {
-                    const url = extractSongUrl();
+                    const url = extractSongUrl() || lastUrl;
                     if (url && data.token) {
                         sentThisSession = true;
-                        sendUrl(url, data.token).catch(() => {
+                        // Keep the idle-sampled buffer fresh for the NEXT
+                        // flow, but decide what to send from the song that
+                        // was current BEFORE this flow became ready.
+                        const chosen = pickSongToSend(url);
+                        lastUrl = url;
+                        sendUrl(chosen, data.token).catch(() => {
                             // The POST was rejected (flow ended, token mismatch,
                             // server raced away) — allow a retry on the next poll
                             // instead of silently dropping the song.
@@ -101,9 +113,13 @@ function poll() {
                     }
                 }
             } else {
-                // Server acknowledged or flow ended — reset for next keybind
+                // Server acknowledged or flow ended — reset for next keybind.
+                // Keep the buffer fresh so a flow that flips ready mid-rollover
+                // can still fall back to the song playing just before.
                 lastToken = null;
                 sentThisSession = false;
+                const idleUrl = extractSongUrl();
+                if (idleUrl) lastUrl = idleUrl;
             }
         })
         .catch(() => {
@@ -118,6 +134,27 @@ function poll() {
                 );
             }
         });
+}
+
+// Decide which song URL to send when a flow becomes ready.
+//
+// The content script samples the player asynchronously from the keybind
+// press (the flow becomes "ready" on the next poll after the press).  A
+// song that ends near the press can roll over in that gap, so the player
+// now shows the NEXT track while the user pressed for the PREVIOUS one
+// (the reported bug: pressing in the last ~2s of a song adds the next one).
+//
+// `current` is what the player shows at this poll; `lastUrl` is what it
+// showed immediately before.  When they differ, the change happened exactly
+// in the window straddling the press, and the user was hearing the OLD song
+// when they pressed — so send the buffered (previous) URL, not the one the
+// player just rolled onto.  When they agree (the normal case: a song has
+// been playing for a while), send `current` unchanged.
+function pickSongToSend(current) {
+    if (lastUrl && lastUrl !== current) {
+        return lastUrl;
+    }
+    return current;
 }
 
 function startPolling() {
