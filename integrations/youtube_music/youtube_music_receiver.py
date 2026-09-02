@@ -194,7 +194,10 @@ class URLReceiverManager:
                 return jsonify({"error": "Rate limit exceeded. Try again later."}), 429
 
             try:
-                data = request.get_json()
+                # silent=True: a malformed / non-JSON body yields None below
+                # (-> 400 "No URL provided") instead of raising BadRequest
+                # and falling into the 500 handler - this is a client error.
+                data = request.get_json(silent=True)
                 url = data.get("url", "").strip() if data else ""
 
                 if not url:

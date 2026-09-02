@@ -2,6 +2,10 @@
   "id": "youtube_music",
   "display_name": "YouTube Music",
   "auth_file": "browser.json",
+  "auth_file_fallbacks": [
+    "browser.json",
+    "integrations/youtube_music/browser.json"
+  ],
   "integration_class": "YouTubeMusicIntegration",
   "flow_type": "extension",
   "auth_module": "youtube_music",

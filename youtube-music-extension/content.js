@@ -5,7 +5,27 @@
 // Uses exponential back-off when the server is unreachable to
 // avoid excessive network churn between keybind presses.
 
-const SERVER_URL = 'http://127.0.0.1:5000';
+// Candidate loopback server URLs derived from the manifest's
+// host_permissions, so the port the extension talks to ALWAYS matches
+// plugin.json "receiver_port" - it is NOT hardcoded here in a way that can
+// silently drift.  (Firefox match patterns cannot use wildcard ports, so
+// each entry must be a literal http://127.0.0.1:<port>/ pattern - match a
+// literal numeric port.)
+function localServerUrls() {
+    let patterns = [];
+    try {
+        patterns = (chrome.runtime.getManifest().host_permissions) || [];
+    } catch (_) { /* manifest unavailable - no candidates */ }
+    const bases = [];
+    for (const p of patterns) {
+        const m = /^http:\/\/127\.0\.0\.1:(\d+)\/\*$/.exec(p);
+        if (m) bases.push(`http://127.0.0.1:${m[1]}`);
+    }
+    // Fall back to the canonical default so the extension still polls even
+    // if the manifest can't be read or lacks a loopback permission.
+    return bases.length ? bases : ['http://127.0.0.1:5000'];
+}
+
 const POLL_INTERVAL_MS = 500;
 const MAX_BACKOFF_MS = 8000;
 const BACKOFF_FACTOR = 2;
@@ -23,11 +43,15 @@ let currentInterval = POLL_INTERVAL_MS;
 // forever for a URL).
 let lastToken = null;
 
-// Most recent song URL sampled on any poll (ready or idle).  Used to fix a
+// Most recent song URL sampled on every poll (server up or down), which
+// makes it a continuous buffer of the player's current song.  Used to fix a
 // track-rollover race (see pickSongToSend): if the song visibly changes in
 // the window straddling a keybind press, the user was pressing for the
 // PREVIOUS song, so we fall back to this buffered URL instead of eagerly
-// sending whatever the player just rolled onto.
+// sending whatever the player just rolled onto.  Because it is refreshed on
+// every poll (including server-down ones between keybinds), it always holds
+// the song the player was on just before the press - never a stale value
+// from a previous flow.
 let lastUrl = null;
 
 // Extract the clean YouTube Music URL for the current song.
@@ -51,8 +75,12 @@ function extractSongUrl() {
     return null;
 }
 
+// The first candidate base URL (all candidates are equivalent loopback
+// forms; the manifest-derived one is authoritative).  Computed once.
+const serverUrl = () => localServerUrls()[0];
+
 function sendUrl(url, token) {
-    return fetch(`${SERVER_URL}/receive-url`, {
+    return fetch(`${serverUrl()}/receive-url`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -77,7 +105,7 @@ function isTabPlaying() {
 }
 
 function poll() {
-    fetch(`${SERVER_URL}/status`)
+    fetch(`${serverUrl()}/status`)
         .then(resp => resp.json())
         .then(data => {
             // Server responded — reset back-off
@@ -126,6 +154,14 @@ function poll() {
             // Server is down — that's expected between keybinds
             lastToken = null;
             sentThisSession = false;
+            // Keep the buffer fresh even while the server is down.  The
+            // player is reachable regardless of server state, and without
+            // this lastUrl would freeze at whatever song the previous flow
+            // touched - so the next keybind would think "the song changed
+            // right at the press" (lastUrl !== current) and send the STALE
+            // previous song instead of the one actually playing.
+            const idleUrl = extractSongUrl();
+            if (idleUrl) lastUrl = idleUrl;
             consecutiveFailures++;
             if (consecutiveFailures >= CONSECUTIVE_FAILURES_RESET) {
                 currentInterval = Math.min(

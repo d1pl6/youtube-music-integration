@@ -21,6 +21,9 @@ AUTH_FOLDER = Path(user_config_dir("playlistmanager")) / "auth"
 
 BROWSER_FILE = AUTH_FOLDER / "browser.json"
 # Additional lookup locations for browser.json
+# NOTE: keep in sync with plugin.json "auth_file_fallbacks" - uninstall /
+# logout delete every declared file, and a fallback copy that is not
+# declared here would re-authenticate the platform after removal.
 BROWSER_FILE_FALLBACKS = [
     Path(__file__).parent.parent.parent / "browser.json",
     Path(__file__).parent / "browser.json",

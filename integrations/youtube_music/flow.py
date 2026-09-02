@@ -563,6 +563,10 @@ def _strip_channel_suffix(name: str) -> str:
     "Various Artists - Topic" etc.
     """
 
-    # Strip " - Topic", "- Topic" and similar variants
-    cleaned = re.sub(r"\s*[-–-]\s*Topic\s*$", "", name, flags=re.IGNORECASE).strip()
+    # Strip " - Topic", "– Topic", "— Topic" (and any casing) from the end.
+    # NOTE: [-–—] must stay a LITERAL class of hyphen / en-dash / em-dash.
+    # A "[a-b]" range here is a trap: "-–" spans U+002D..U+2013 (a huge
+    # unintended set) and STOPS just short of em-dash U+2014, so the most
+    # common YT Music suffix " — Topic" would survive.
+    cleaned = re.sub(r"\s*[-–—]\s*Topic\s*$", "", name, flags=re.IGNORECASE).strip()
     return cleaned
