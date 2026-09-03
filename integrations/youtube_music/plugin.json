@@ -22,5 +22,6 @@
     "m.youtube.com"
   ],
   "playlist_url_template": "https://{host}/playlist?list={id}",
-  "song_url_template": "https://{host}/watch?v={id}"
+  "song_url_template": "https://{host}/watch?v={id}",
+  "version": 4
 }
