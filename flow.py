@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Cache-miss sentinel for _playlist_id_cache.  A plain None lookup means
+# "not cached" but ALSO "not found" for the caller, so an absent playlist
+# could never be cached as a negative without colliding with the miss
+# case.  Distinguish "we looked and it is not there" from "never looked".
+_NOT_FOUND = object()
+
 # Mirrors plugin.json "id" - flows key local-DB writes by it.
 PLATFORM = "youtube_music"
 
@@ -62,7 +68,7 @@ class YouTubeMusicFlow(BaseFlowController):
         self.url_receiver = url_receiver
         # keyed by (playlist_name, known_id) so two playlists that share a
         # name (different ids) cannot poison each other's cache entry
-        self._playlist_id_cache: Dict[tuple, str] = {}
+        self._playlist_id_cache: Dict[tuple, object] = {}
 
     def execute_flow(
         self,
@@ -515,8 +521,8 @@ class YouTubeMusicFlow(BaseFlowController):
             Playlist ID or None if not found
         """
         cache_key = (playlist_name, known_id or "")
-        cached = self._playlist_id_cache.get(cache_key)
-        if cached is not None:
+        cached = self._playlist_id_cache.get(cache_key, _NOT_FOUND)
+        if cached is not _NOT_FOUND:
             return cached
 
         if known_id:
@@ -541,6 +547,12 @@ class YouTubeMusicFlow(BaseFlowController):
                     if pid:
                         self._playlist_id_cache[cache_key] = pid
                     return pid
+            # Cache the negative result too: a playlist that is not in the
+            # library (renamed on the platform, deleted elsewhere, or a
+            # legacy name the store never resolved) would otherwise trigger
+            # a full-library network scan on EVERY keybind press - the
+            # whole point of this cache is to avoid that round trip.
+            self._playlist_id_cache[cache_key] = _NOT_FOUND
             return None
         except Exception as e:
             logger.error("Failed to get playlist ID for '%s': %s", playlist_name, e)

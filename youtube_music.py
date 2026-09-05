@@ -31,13 +31,22 @@ BROWSER_FILE_FALLBACKS = [
 
 
 def _patched_get_library_playlists(self, limit: int | None = 25):
-    """Fallback playlist fetch for broken ytmusicapi get_library_playlists."""
+    """Fallback playlist fetch for broken ytmusicapi get_library_playlists.
+
+    Merges the user's playlists AND liked playlists, deduped by id so a
+    playlist that appears in both (followed + liked) is not listed twice.
+    Each browse page gracefully skipped on error so one broken endpoint
+    never loses the other's playlists.
+    """
     from ytmusicapi.continuations import get_continuations
     from ytmusicapi.parsers.browsing import GRID, parse_content_list, parse_playlist
     from ytmusicapi.parsers.library import get_library_contents
 
     self._check_auth()
     browse_ids = ["FEmusic_library_playlists", "FEmusic_liked_playlists"]
+
+    merged: list = []
+    seen_ids: set = set()
     last_exception = None
 
     for browse_id in browse_ids:
@@ -47,7 +56,7 @@ def _patched_get_library_playlists(self, limit: int | None = 25):
             response = self._send_request(endpoint, body)
             results = get_library_contents(response, GRID)
             if results is None:
-                return []
+                continue
 
             # Filter items: skip the first entry if it looks like a header
             # (no playlistId) rather than unconditionally slicing [1:].
@@ -55,36 +64,41 @@ def _patched_get_library_playlists(self, limit: int | None = 25):
             if items and not _is_likely_playlist_item(items[0]):
                 items = items[1:]
 
-            playlists = parse_content_list(items, parse_playlist)
-            # Bound the result to `limit` even when the first browse page
-            # already exceeds it - a negative remaining_limit would make
-            # get_continuations bail and return the whole first page.
-            if limit is not None and len(playlists) >= limit:
-                return playlists[:limit]
+            page = parse_content_list(items, parse_playlist)
             if "continuations" in results:
-                remaining_limit = None if limit is None else (limit - len(playlists))
-                request_func = lambda additionalParams: self._send_request(
-                    endpoint, body, additionalParams
-                )
-                playlists.extend(
+                remaining = None if limit is None else (limit - len(merged))
+                page.extend(
                     get_continuations(
                         results,
                         "gridContinuation",
-                        remaining_limit,
-                        request_func,
+                        remaining,
+                        lambda additionalParams: self._send_request(
+                            endpoint, body, additionalParams
+                        ),
                         lambda contents: parse_content_list(contents, parse_playlist),
                     )
                 )
-            return playlists
+
+            for playlist in page:
+                pid = playlist.get("playlistId")
+                if pid and pid in seen_ids:
+                    continue
+                if pid:
+                    seen_ids.add(pid)
+                merged.append(playlist)
+                # Honour the limit across both browse endpoints so a huge
+                # liked list cannot balloon the result past the cap.
+                if limit is not None and len(merged) >= limit:
+                    return merged[:limit]
         except Exception as exc:
             last_exception = exc
             logger.debug(
                 f"get_library_playlists fallback failed for {browse_id}: {exc}"
             )
 
-    if last_exception:
+    if not merged and last_exception:
         raise last_exception
-    return []
+    return merged
 
 
 def _is_likely_playlist_item(item: dict) -> bool:
